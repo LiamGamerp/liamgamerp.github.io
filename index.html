@@ -1,257 +1,430 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Snappy Chess</title>
-<style>
-  :root { color-scheme: light dark; --light:#f0d9b5; --dark:#b58863; --accent:#90ee90; }
-  * { box-sizing:border-box; }
-  body { margin:0; padding:20px; font:16px/1.4 system-ui,-apple-system,Segoe UI,sans-serif; display:flex; justify-content:center; }
-  main { width:min(100%,560px); }
-  h1 { margin:0 0 6px; font-size:1.6rem; }
-  .sub { margin:0 0 16px; opacity:.75; }
-  #status { min-height:2.8em; padding:10px 12px; margin-bottom:12px; border:1px solid #8886; border-radius:10px; }
-  #board { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); width:100%; border:2px solid #514235; }
-  .square { aspect-ratio:1; border:0; border-radius:0; padding:0; display:flex; align-items:center; justify-content:center; font-size:clamp(24px,7vw,48px); cursor:pointer; color:#111; position:relative; }
-  .light { background:var(--light); } .dark { background:var(--dark); }
-  .square.selected { background:var(--accent); outline:3px solid #26833a; outline-offset:-3px; }
-  .square.legal::after { content:""; position:absolute; width:22%; height:22%; border-radius:50%; background:#244b2c77; }
-  .square.capture::after { content:""; position:absolute; inset:4px; border:4px solid #244b2c88; border-radius:50%; background:transparent; }
-  .square:focus-visible { outline:3px solid #1674d1; outline-offset:-3px; z-index:1; }
-  .coords { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); text-align:center; font-size:.8rem; opacity:.75; padding:4px 0; }
-  .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
-  button.control { border:1px solid #8888; border-radius:8px; padding:9px 13px; background:transparent; cursor:pointer; }
-  button.control:hover { background:#8882; }
-  #moves { margin-top:14px; font-size:.9rem; overflow-wrap:anywhere; }
-  .note { margin-top:12px; font-size:.82rem; opacity:.7; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Snappy Chess</title>
+
+  <script type="module">
+  import { Chess } from "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/+esm";
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #202124;
+      font-family: Arial, sans-serif;
+      padding: 16px;
+    }
+
+    .game {
+      width: min(92vw, 560px);
+    }
+
+    #board {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      width: 100%;
+      aspect-ratio: 1;
+      border: 4px solid #111;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .square {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      aspect-ratio: 1;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      position: relative;
+      font-size: clamp(24px, 7vw, 52px);
+      line-height: 1;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .light {
+      background: #eeeed2;
+    }
+
+    .dark {
+      background: #769656;
+    }
+
+    .selected {
+      background: #f6f669 !important;
+    }
+
+    .legal::after {
+      content: "";
+      position: absolute;
+      width: 25%;
+      height: 25%;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.23);
+    }
+
+    .legal.capture::after {
+      width: 85%;
+      height: 85%;
+      background: transparent;
+      border: 5px solid rgba(0, 0, 0, 0.23);
+    }
+
+    .piece {
+      position: relative;
+      z-index: 1;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,.2));
+    }
+
+    .white-piece {
+      color: #fff;
+      -webkit-text-stroke: 1px #222;
+      text-shadow: 1px 1px 1px #222;
+    }
+
+    .black-piece {
+      color: #181818;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    button.action {
+      flex: 1;
+      padding: 14px 10px;
+      border: none;
+      border-radius: 7px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #resign {
+      background: #b83b3b;
+      color: white;
+    }
+
+    #newGame {
+      background: #769656;
+      color: white;
+    }
+
+    button.action:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button.action:active {
+      transform: scale(0.98);
+    }
+  </style>
 </head>
+
 <body>
-<main>
-  <h1>♟ Snappy Chess</h1>
-  <p class="sub">You play White. Click a piece, then its destination.</p>
-  <div id="status" role="status" aria-live="polite">Loading chess engine…</div>
-  <div id="board" aria-label="Chess board"></div>
-  <div class="coords" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span></div>
-  <div class="controls">
-    <button class="control" id="newGame">New game</button>
-    <button class="control" id="undo">Undo last turn</button>
-    <button class="control" id="flip">Flip board</button>
-  </div>
-  <div id="moves"><strong>Moves:</strong> <span id="moveList">—</span></div>
-  <p class="note">All game state, move validation, and bot decisions run in your browser. The chess rules library is loaded from a public CDN, so an internet connection is needed when opening this page.</p>
-</main>
+  <main class="game">
+    <div id="board" aria-label="Chess board"></div>
 
-<script type="module">
-import { Chess } from "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/+esm";
-(() => {
-  const PIECE_VALUES = { p:1, n:3, b:3, r:5, q:9, k:0 };
-  const SYMBOLS = {
-    w:{p:"♙",n:"♘",b:"♗",r:"♖",q:"♕",k:"♔"},
-    b:{p:"♟",n:"♞",b:"♝",r:"♜",q:"♛",k:"♚"}
-  };
-  const CENTER = ["e4","d4","e5","d5"];
-  const files = "abcdefgh";
-  let game = new Chess();
-  let selected = null;
-  let flipped = false;
-  let thinking = false;
-  const boardEl = document.querySelector("#board");
-  const statusEl = document.querySelector("#status");
-  const moveListEl = document.querySelector("#moveList");
-  function distance(a,b) {
-    const df = Math.abs(files.indexOf(a[0])-files.indexOf(b[0]));
-    const dr = Math.abs(Number(a[1])-Number(b[1]));
-    return Math.max(df,dr);
-  }
-  function distanceToCenter(square) {
-    return Math.min(...CENTER.map(c => distance(square,c)));
-  }
-  function isAttacked(square, byColor) {
-    return game.isAttacked(square, byColor);
-  }
-function botMove() {
-  const legal = game.moves({ verbose: true });
-  if (!legal.length) return null;
-  for (const move of legal) {
-    game.move(move);
-    const mate = game.isCheckmate();
-    game.undo();
-    if (mate) return move;
-  }
-  let bestMove = null;
-  let bestValue = -1;
-  let lowestDistance = 99;
-  let lowestDistanceMove = null;
-  let lowestDistanceValue = -1;
-  const opponentColor = game.turn() === "w" ? "b" : "w";
-  for (const move of legal) {
-    let moveValue = 0;
-    const movingValue = PIECE_VALUES[move.piece] || 0;
-    const capturedValue = PIECE_VALUES[move.captured] || 0;
-    if (game.isCapture(move)) {
-      if (move.captured) {
-        game.move(move);
+    <div class="controls">
+      <button id="resign" class="action">Resign</button>
+      <button id="newGame" class="action">New Game</button>
+    </div>
+  </main>
 
-        const isDefended = game.isAttacked(move.to, game.turn());
+  <script>
+    const game = new Chess();
 
+    const boardElement = document.getElementById("board");
+    const resignButton = document.getElementById("resign");
+    const newGameButton = document.getElementById("newGame");
+
+    const PIECE_VALUES = {
+      p: 1, n: 3, b: 3, r: 5, q: 9, k: 0
+    };
+
+    const CENTER_SQUARES = ["e4", "d4", "e5", "d5"];
+
+    const PIECES = {
+      w: { k: "♔", q: "♕", r: "♖", b: "♗", n: "♘", p: "♙" },
+      b: { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" }
+    };
+
+    let selectedSquare = null;
+    let legalTargets = [];
+    let gameOver = false;
+    let thinking = false;
+
+    function squareDistance(a, b) {
+      const df = Math.abs(a.charCodeAt(0) - b.charCodeAt(0));
+      const dr = Math.abs(Number(a[1]) - Number(b[1]));
+      return Math.max(df, dr);
+    }
+
+    function distanceToCenter(move) {
+      return Math.min(
+        ...CENTER_SQUARES.map(center => squareDistance(move.to, center))
+      );
+    }
+
+    function applyMove(move) {
+      return game.move({
+        from: move.from,
+        to: move.to,
+        promotion: move.promotion || "q"
+      });
+    }
+
+    function botMove() {
+      const legalMoves = game.moves({ verbose: true });
+
+      // Prefer immediate checkmate.
+      for (const move of legalMoves) {
+        applyMove(move);
+        const isMate = game.isCheckmate();
         game.undo();
-        if (isDefended && movingValue > capturedValue) {
-          continue;
+
+        if (isMate) return move;
+      }
+
+      let bestMove = null;
+      let bestValue = -1;
+      let lowestDistance = 99;
+      let lowestDistanceMove = null;
+      let lowestDistanceValue = -1;
+
+      for (const move of legalMoves) {
+        let moveValue = 0;
+
+        const isCapture =
+          move.flags.includes("c") || move.flags.includes("e");
+
+        if (isCapture) {
+          const capturedPiece = game.get(move.to);
+          const movingPiece = game.get(move.from);
+
+          if (capturedPiece && movingPiece) {
+            const capturedValue = PIECE_VALUES[capturedPiece.type] || 0;
+            const movingValue = PIECE_VALUES[movingPiece.type] || 0;
+
+            applyMove(move);
+            const isDefended = game.isAttacked(move.to, game.turn());
+            game.undo();
+
+            if (isDefended && movingValue > capturedValue) {
+              continue;
+            }
+
+            moveValue += capturedValue - movingValue;
+          }
         }
 
-        moveValue += capturedValue - movingValue;
+        const distance = distanceToCenter(move);
+        const movingPiece = game.get(move.from);
+
+        if (distance < lowestDistance && movingPiece?.type !== "r") {
+          lowestDistance = distance;
+          lowestDistanceMove = move;
+          lowestDistanceValue = moveValue;
+        }
+
+        if (moveValue > bestValue) {
+          bestValue = moveValue;
+          bestMove = move;
+        }
       }
-    } else {
-      game.move(move);
 
-      const isAttacked = game.isAttacked(move.to, game.turn());
-
-      game.undo();
-
-      if (isAttacked) {
-        moveValue -= 5;
+      if (lowestDistanceMove &&
+          lowestDistanceValue + 0.1 > bestValue) {
+        bestMove = lowestDistanceMove;
       }
+
+      if (bestMove) return bestMove;
+
+      return legalMoves[Math.floor(Math.random() * legalMoves.length)];
     }
-    const fromAttacked = game.isAttacked(
-      move.from,
-      opponentColor
-    );
-    const toAttacked = game.isAttacked(
-      move.to,
-      opponentColor
-    );
 
-    if (fromAttacked && !toAttacked) {
-      moveValue += movingValue;
-    }
-    const dist = distanceToCenter(move.to);
-    if (
-      dist < lowestDistance &&
-      !["r", "k"].includes(move.piece)
-    ) {
-      lowestDistance = dist;
-      lowestDistanceMove = move;
-      lowestDistanceValue = moveValue;
-    }
-    if (moveValue > bestValue) {
-      bestValue = moveValue;
-      bestMove = move;
-    }
-  }
+    function renderBoard() {
+      boardElement.innerHTML = "";
 
-  if (0.1 + lowestDistanceValue > bestValue) {
-    bestMove = lowestDistanceMove;
-  }
-  return bestMove ||
-    legal[Math.floor(Math.random() * legal.length)];
-}
+      for (let rank = 8; rank >= 1; rank--) {
+        for (let file = 0; file < 8; file++) {
+          const square = String.fromCharCode(97 + file) + rank;
+          const piece = game.get(square);
+          const button = document.createElement("button");
 
-  function gameStatus() {
-    if (game.isCheckmate()) return game.turn() === "w" ? "Checkmate — Snappy wins. Start a new game to play again." : "Checkmate — you win! Start a new game to play again.";
-    if (game.isStalemate()) return "Draw by stalemate.";
-    if (game.isThreefoldRepetition()) return "Draw by threefold repetition.";
-    if (game.isInsufficientMaterial()) return "Draw — insufficient material.";
-    if (game.isDraw()) return "Draw.";
-    if (game.isCheck()) return (game.turn() === "w" ? "Your king is in check." : "Snappy is in check.");
-    return game.turn() === "w" ? "Your turn! Click a white piece, then a destination." : "Snappy is thinking…";
-  }
+          button.type = "button";
+          button.className =
+            "square " + ((rank + file) % 2 === 0 ? "light" : "dark");
+          button.setAttribute("aria-label", square);
 
-  function render() {
-    boardEl.innerHTML = "";
-    const ranks = flipped ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1];
-    const fileOrder = flipped ? [...files].reverse() : [...files];
-    let targets = [];
-    if (selected) targets = game.moves({square:selected, verbose:true});
+          if (square === selectedSquare) {
+            button.classList.add("selected");
+          }
 
-    for (const rank of ranks) {
-      for (const file of fileOrder) {
-        const square = file + rank;
-        const piece = game.get(square);
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "square " + ((files.indexOf(file) + rank) % 2 === 0 ? "dark" : "light");
-        if (square === selected) btn.classList.add("selected");
-        const target = targets.find(m => m.to === square);
-        if (target) btn.classList.add(target.captured ? "capture" : "legal");
-        btn.textContent = piece ? SYMBOLS[piece.color][piece.type] : "";
-        btn.setAttribute("aria-label", `${square}${piece ? ", " + piece.color + " " + piece.type : ""}`);
-        btn.title = square;
-        btn.addEventListener("click", () => handleSquare(square));
-        boardEl.appendChild(btn);
+          if (legalTargets.some(move => move.to === square)) {
+            button.classList.add("legal");
+
+            if (piece) button.classList.add("capture");
+          }
+
+          if (piece) {
+            const span = document.createElement("span");
+            span.className =
+              "piece " + (piece.color === "w" ? "white-piece" : "black-piece");
+            span.textContent = PIECES[piece.color][piece.type];
+            button.appendChild(span);
+          }
+
+          button.addEventListener("click", () => onSquareClick(square));
+          boardElement.appendChild(button);
+        }
       }
+
+      resignButton.disabled = gameOver;
     }
-    moveListEl.textContent = game.history().length ? game.history().map((m,i) => `${i%2===0 ? Math.floor(i/2)+1+". " : ""}${m}`).join(" ") : "—";
-    statusEl.textContent = gameStatus();
-    if (thinking) statusEl.textContent = "Snappy is thinking…";
-  }
 
-  function handleSquare(square) {
-    if (thinking || game.isGameOver() || game.turn() !== "w") return;
-    const piece = game.get(square);
+    function onSquareClick(square) {
+      if (gameOver || thinking || game.turn() !== "w") return;
 
-    if (!selected) {
+      const piece = game.get(square);
+
+      if (selectedSquare) {
+        const move = legalTargets.find(m => m.to === square);
+
+        if (move) {
+          const movingPiece = game.get(selectedSquare);
+          const promotion =
+            movingPiece?.type === "p" && square[1] === "8";
+
+          const moveResult = game.move({
+            from: selectedSquare,
+            to: square,
+            promotion: promotion ? "q" : undefined
+          });
+
+          selectedSquare = null;
+          legalTargets = [];
+
+          if (moveResult) {
+            renderBoard();
+
+            if (checkGameOver()) return;
+
+            thinking = true;
+            renderBoard();
+
+
+			setTimeout(() => {
+			  try {
+				if (gameOver) return;
+
+				const response = botMove();
+
+				if (response) {
+				  applyMove(response);
+				}
+
+			// Always release the board after Snappy's turn.
+			selectedSquare = null;
+			legalTargets = [];
+			thinking = false;
+
+			renderBoard();
+			checkGameOver();
+		  } catch (error) {
+			console.error("Snappy's move failed:", error);
+			thinking = false;
+			renderBoard();
+		  }
+		}, 180);
+
+
+            return;
+          }
+        }
+      }
+
       if (piece && piece.color === "w") {
-        selected = square;
-        render();
-        statusEl.textContent = `Selected ${square}. Click a highlighted destination.`;
+        selectedSquare = square;
+        legalTargets = game.moves({
+          square,
+          verbose: true
+        });
       } else {
-        statusEl.textContent = "Please select one of your own (white) pieces.";
+        selectedSquare = null;
+        legalTargets = [];
       }
-      return;
+
+      renderBoard();
     }
 
-    // Clicking another white piece changes selection.
-    if (piece && piece.color === "w") {
-      selected = square;
-      render();
-      statusEl.textContent = `Selected ${square}. Click a highlighted destination.`;
-      return;
-    }
+    function checkGameOver() {
+      if (!game.isGameOver()) return false;
 
-    const move = game.move({from:selected, to:square, promotion:"q"});
-    if (!move) {
-      selected = null;
-      render();
-      statusEl.textContent = "Illegal move. Selection cleared.";
-      return;
-    }
-
-    selected = null;
-    render();
-    if (game.isGameOver()) return;
-
-    thinking = true;
-    statusEl.textContent = "Snappy is thinking…";
-    // Yield to the browser so the status updates before the bot runs.
-    setTimeout(() => {
-      const reply = botMove();
-      if (reply) game.move({from:reply.from, to:reply.to, promotion:reply.promotion || "q"});
+      gameOver = true;
       thinking = false;
-      render();
-    }, 120);
-  }
+      selectedSquare = null;
+      legalTargets = [];
+      renderBoard();
 
-  document.querySelector("#newGame").addEventListener("click", () => {
-    game = new Chess(); selected = null; thinking = false; render();
-  });
-  document.querySelector("#undo").addEventListener("click", () => {
-    if (thinking) return;
-    if (game.history().length) game.undo();
-    if (game.history().length && game.turn() === "b") game.undo();
-    selected = null; render();
-  });
-  document.querySelector("#flip").addEventListener("click", () => {
-    flipped = !flipped; render();
-  });
+      if (game.isCheckmate()) {
+        alert(
+          game.turn() === "w"
+            ? "Checkmate! Snappy wins."
+            : "Checkmate! You win!"
+        );
+      } else if (game.isStalemate()) {
+        alert("Draw by stalemate!");
+      } else if (game.isDraw()) {
+        alert("The game is a draw!");
+      } else {
+        alert("Game over!");
+      }
 
-  try {
-    render();
-  } catch (err) {
-    statusEl.textContent = "Chess could not start: " + (err?.message || "unknown error") + ". Check your internet connection and reload this page.";
-  }
-})();
-</script>
+      return true;
+    }
+
+    resignButton.addEventListener("click", () => {
+      if (gameOver) return;
+
+      if (confirm("Are you sure you want to resign?")) {
+        gameOver = true;
+        selectedSquare = null;
+        legalTargets = [];
+        renderBoard();
+        alert("You resigned. Snappy wins!");
+      }
+    });
+
+    newGameButton.addEventListener("click", () => {
+      if (!gameOver && game.history().length > 0) {
+        if (!confirm("Start a new game? Your current game will be lost.")) {
+          return;
+        }
+      }
+
+      game.reset();
+      selectedSquare = null;
+      legalTargets = [];
+      gameOver = false;
+      thinking = false;
+      renderBoard();
+    });
+
+    renderBoard();
+  </script>
 </body>
 </html>
