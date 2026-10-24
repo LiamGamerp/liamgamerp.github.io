@@ -1,11 +1,257 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Liam's web IDE</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Snappy Chess</title>
+<style>
+  :root { color-scheme: light dark; --light:#f0d9b5; --dark:#b58863; --accent:#90ee90; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:20px; font:16px/1.4 system-ui,-apple-system,Segoe UI,sans-serif; display:flex; justify-content:center; }
+  main { width:min(100%,560px); }
+  h1 { margin:0 0 6px; font-size:1.6rem; }
+  .sub { margin:0 0 16px; opacity:.75; }
+  #status { min-height:2.8em; padding:10px 12px; margin-bottom:12px; border:1px solid #8886; border-radius:10px; }
+  #board { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); width:100%; border:2px solid #514235; }
+  .square { aspect-ratio:1; border:0; border-radius:0; padding:0; display:flex; align-items:center; justify-content:center; font-size:clamp(24px,7vw,48px); cursor:pointer; color:#111; position:relative; }
+  .light { background:var(--light); } .dark { background:var(--dark); }
+  .square.selected { background:var(--accent); outline:3px solid #26833a; outline-offset:-3px; }
+  .square.legal::after { content:""; position:absolute; width:22%; height:22%; border-radius:50%; background:#244b2c77; }
+  .square.capture::after { content:""; position:absolute; inset:4px; border:4px solid #244b2c88; border-radius:50%; background:transparent; }
+  .square:focus-visible { outline:3px solid #1674d1; outline-offset:-3px; z-index:1; }
+  .coords { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); text-align:center; font-size:.8rem; opacity:.75; padding:4px 0; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  button.control { border:1px solid #8888; border-radius:8px; padding:9px 13px; background:transparent; cursor:pointer; }
+  button.control:hover { background:#8882; }
+  #moves { margin-top:14px; font-size:.9rem; overflow-wrap:anywhere; }
+  .note { margin-top:12px; font-size:.82rem; opacity:.7; }
+</style>
 </head>
 <body>
-    <label for="Code">Code:</label>
-    <textarea id = "code" name = "code" rows="4" cols="50></textarea>  
+<main>
+  <h1>♟ Snappy Chess</h1>
+  <p class="sub">You play White. Click a piece, then its destination.</p>
+  <div id="status" role="status" aria-live="polite">Loading chess engine…</div>
+  <div id="board" aria-label="Chess board"></div>
+  <div class="coords" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span></div>
+  <div class="controls">
+    <button class="control" id="newGame">New game</button>
+    <button class="control" id="undo">Undo last turn</button>
+    <button class="control" id="flip">Flip board</button>
+  </div>
+  <div id="moves"><strong>Moves:</strong> <span id="moveList">—</span></div>
+  <p class="note">All game state, move validation, and bot decisions run in your browser. The chess rules library is loaded from a public CDN, so an internet connection is needed when opening this page.</p>
+</main>
+
+<script type="module">
+import { Chess } from "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/+esm";
+(() => {
+  const PIECE_VALUES = { p:1, n:3, b:3, r:5, q:9, k:0 };
+  const SYMBOLS = {
+    w:{p:"♙",n:"♘",b:"♗",r:"♖",q:"♕",k:"♔"},
+    b:{p:"♟",n:"♞",b:"♝",r:"♜",q:"♛",k:"♚"}
+  };
+  const CENTER = ["e4","d4","e5","d5"];
+  const files = "abcdefgh";
+  let game = new Chess();
+  let selected = null;
+  let flipped = false;
+  let thinking = false;
+  const boardEl = document.querySelector("#board");
+  const statusEl = document.querySelector("#status");
+  const moveListEl = document.querySelector("#moveList");
+  function distance(a,b) {
+    const df = Math.abs(files.indexOf(a[0])-files.indexOf(b[0]));
+    const dr = Math.abs(Number(a[1])-Number(b[1]));
+    return Math.max(df,dr);
+  }
+  function distanceToCenter(square) {
+    return Math.min(...CENTER.map(c => distance(square,c)));
+  }
+  function isAttacked(square, byColor) {
+    return game.isAttacked(square, byColor);
+  }
+function botMove() {
+  const legal = game.moves({ verbose: true });
+  if (!legal.length) return null;
+  for (const move of legal) {
+    game.move(move);
+    const mate = game.isCheckmate();
+    game.undo();
+    if (mate) return move;
+  }
+  let bestMove = null;
+  let bestValue = -1;
+  let lowestDistance = 99;
+  let lowestDistanceMove = null;
+  let lowestDistanceValue = -1;
+  const opponentColor = game.turn() === "w" ? "b" : "w";
+  for (const move of legal) {
+    let moveValue = 0;
+    const movingValue = PIECE_VALUES[move.piece] || 0;
+    const capturedValue = PIECE_VALUES[move.captured] || 0;
+    if (game.isCapture(move)) {
+      if (move.captured) {
+        game.move(move);
+
+        const isDefended = game.isAttacked(move.to, game.turn());
+
+        game.undo();
+        if (isDefended && movingValue > capturedValue) {
+          continue;
+        }
+
+        moveValue += capturedValue - movingValue;
+      }
+    } else {
+      game.move(move);
+
+      const isAttacked = game.isAttacked(move.to, game.turn());
+
+      game.undo();
+
+      if (isAttacked) {
+        moveValue -= 5;
+      }
+    }
+    const fromAttacked = game.isAttacked(
+      move.from,
+      opponentColor
+    );
+    const toAttacked = game.isAttacked(
+      move.to,
+      opponentColor
+    );
+
+    if (fromAttacked && !toAttacked) {
+      moveValue += movingValue;
+    }
+    const dist = distanceToCenter(move.to);
+    if (
+      dist < lowestDistance &&
+      !["r", "k"].includes(move.piece)
+    ) {
+      lowestDistance = dist;
+      lowestDistanceMove = move;
+      lowestDistanceValue = moveValue;
+    }
+    if (moveValue > bestValue) {
+      bestValue = moveValue;
+      bestMove = move;
+    }
+  }
+
+  if (0.1 + lowestDistanceValue > bestValue) {
+    bestMove = lowestDistanceMove;
+  }
+  return bestMove ||
+    legal[Math.floor(Math.random() * legal.length)];
+}
+
+  function gameStatus() {
+    if (game.isCheckmate()) return game.turn() === "w" ? "Checkmate — Snappy wins. Start a new game to play again." : "Checkmate — you win! Start a new game to play again.";
+    if (game.isStalemate()) return "Draw by stalemate.";
+    if (game.isThreefoldRepetition()) return "Draw by threefold repetition.";
+    if (game.isInsufficientMaterial()) return "Draw — insufficient material.";
+    if (game.isDraw()) return "Draw.";
+    if (game.isCheck()) return (game.turn() === "w" ? "Your king is in check." : "Snappy is in check.");
+    return game.turn() === "w" ? "Your turn! Click a white piece, then a destination." : "Snappy is thinking…";
+  }
+
+  function render() {
+    boardEl.innerHTML = "";
+    const ranks = flipped ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1];
+    const fileOrder = flipped ? [...files].reverse() : [...files];
+    let targets = [];
+    if (selected) targets = game.moves({square:selected, verbose:true});
+
+    for (const rank of ranks) {
+      for (const file of fileOrder) {
+        const square = file + rank;
+        const piece = game.get(square);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "square " + ((files.indexOf(file) + rank) % 2 === 0 ? "dark" : "light");
+        if (square === selected) btn.classList.add("selected");
+        const target = targets.find(m => m.to === square);
+        if (target) btn.classList.add(target.captured ? "capture" : "legal");
+        btn.textContent = piece ? SYMBOLS[piece.color][piece.type] : "";
+        btn.setAttribute("aria-label", `${square}${piece ? ", " + piece.color + " " + piece.type : ""}`);
+        btn.title = square;
+        btn.addEventListener("click", () => handleSquare(square));
+        boardEl.appendChild(btn);
+      }
+    }
+    moveListEl.textContent = game.history().length ? game.history().map((m,i) => `${i%2===0 ? Math.floor(i/2)+1+". " : ""}${m}`).join(" ") : "—";
+    statusEl.textContent = gameStatus();
+    if (thinking) statusEl.textContent = "Snappy is thinking…";
+  }
+
+  function handleSquare(square) {
+    if (thinking || game.isGameOver() || game.turn() !== "w") return;
+    const piece = game.get(square);
+
+    if (!selected) {
+      if (piece && piece.color === "w") {
+        selected = square;
+        render();
+        statusEl.textContent = `Selected ${square}. Click a highlighted destination.`;
+      } else {
+        statusEl.textContent = "Please select one of your own (white) pieces.";
+      }
+      return;
+    }
+
+    // Clicking another white piece changes selection.
+    if (piece && piece.color === "w") {
+      selected = square;
+      render();
+      statusEl.textContent = `Selected ${square}. Click a highlighted destination.`;
+      return;
+    }
+
+    const move = game.move({from:selected, to:square, promotion:"q"});
+    if (!move) {
+      selected = null;
+      render();
+      statusEl.textContent = "Illegal move. Selection cleared.";
+      return;
+    }
+
+    selected = null;
+    render();
+    if (game.isGameOver()) return;
+
+    thinking = true;
+    statusEl.textContent = "Snappy is thinking…";
+    // Yield to the browser so the status updates before the bot runs.
+    setTimeout(() => {
+      const reply = botMove();
+      if (reply) game.move({from:reply.from, to:reply.to, promotion:reply.promotion || "q"});
+      thinking = false;
+      render();
+    }, 120);
+  }
+
+  document.querySelector("#newGame").addEventListener("click", () => {
+    game = new Chess(); selected = null; thinking = false; render();
+  });
+  document.querySelector("#undo").addEventListener("click", () => {
+    if (thinking) return;
+    if (game.history().length) game.undo();
+    if (game.history().length && game.turn() === "b") game.undo();
+    selected = null; render();
+  });
+  document.querySelector("#flip").addEventListener("click", () => {
+    flipped = !flipped; render();
+  });
+
+  try {
+    render();
+  } catch (err) {
+    statusEl.textContent = "Chess could not start: " + (err?.message || "unknown error") + ". Check your internet connection and reload this page.";
+  }
+})();
+</script>
 </body>
 </html>
