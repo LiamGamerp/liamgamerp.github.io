@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Snappy Chess</title>
 
-  <script type="module">
-  import { Chess } from "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/+esm";
-
   <style>
     * {
       box-sizing: border-box;
@@ -37,7 +34,17 @@
       border-radius: 4px;
       overflow: hidden;
     }
-
+		.piece-image {
+	  display: block;
+	  width: 100%;
+	  height: 100%;
+	  object-fit: contain;
+	  position: relative;
+	  z-index: 1;
+	  pointer-events: none;
+	  user-select: none;
+	  -webkit-user-drag: none;
+	}
     .square {
       display: flex;
       align-items: center;
@@ -138,21 +145,46 @@
   <main class="game">
     <div id="board" aria-label="Chess board"></div>
 
-    <div class="controls">
-      <button id="resign" class="action">Resign</button>
-      <button id="newGame" class="action">New Game</button>
-    </div>
+	<div class="controls">
+	  <button id="resign" class="action">Resign</button>
+	  <button id="newGame" class="action">New Game</button>
+	  <button id="copyPGN" class="action" hidden>Copy PGN/Share Game</button>
+	</div>
   </main>
 
-  <script>
+  <script type=module>
+    import { Chess } from
+    "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/+esm";
     const game = new Chess();
+	// Change these URLs to your own asset hosting locations.
+	const ASSET_BASE_URL = "https://images.chesscomfiles.com/chess-themes/pieces/neo/300/";
+	const SOUND_BASE_URL = "http://images.chesscomfiles.com/chess-themes/sounds/_MP3_/default/";
 
+	function pieceImageUrl(color, type) {
+	  const colorPrefix = color === "w" ? "w" : "b";
+	  return `${ASSET_BASE_URL}${colorPrefix}${type}.png`;
+	}
+
+	const sounds = {
+	  move: new Audio(`${SOUND_BASE_URL}move-self.mp3`),
+	  capture: new Audio(`${SOUND_BASE_URL}capture.mp3`),
+	  check: new Audio(`${SOUND_BASE_URL}move-check.mp3`),
+	  gameover: new Audio(`${SOUND_BASE_URL}game-end.mp3`)
+	};
+
+	function playSound(name) {
+	  const sound = sounds[name];
+	  if (!sound) return;
+	  sound.currentTime = 0;
+	  sound.play().catch(() => {});
+	}
     const boardElement = document.getElementById("board");
     const resignButton = document.getElementById("resign");
     const newGameButton = document.getElementById("newGame");
+	const copyPGNButton = document.getElementById("copyPGN");
 
     const PIECE_VALUES = {
-      p: 1, n: 3, b: 3, r: 5, q: 9, k: 0
+      p: 1, n: 3, b: 3, r: 5, q: 9, k: 1 //King is 1 to avoid division by 0
     };
 
     const CENTER_SQUARES = ["e4", "d4", "e5", "d5"];
@@ -170,7 +202,7 @@
     function squareDistance(a, b) {
       const df = Math.abs(a.charCodeAt(0) - b.charCodeAt(0));
       const dr = Math.abs(Number(a[1]) - Number(b[1]));
-      return Math.max(df, dr);
+      return Math.min(df, dr);
     }
 
     function distanceToCenter(move) {
@@ -188,9 +220,8 @@
     }
 
     function botMove() {
+	  const stamp = Date.now()
       const legalMoves = game.moves({ verbose: true });
-
-      // Prefer immediate checkmate.
       for (const move of legalMoves) {
         applyMove(move);
         const isMate = game.isCheckmate();
@@ -198,26 +229,42 @@
 
         if (isMate) return move;
       }
-
       let bestMove = null;
       let bestValue = -1;
       let lowestDistance = 99;
       let lowestDistanceMove = null;
       let lowestDistanceValue = -1;
-
       for (const move of legalMoves) {
-        let moveValue = 0;
+        let moveValue = 0.0;
 
         const isCapture =
           move.flags.includes("c") || move.flags.includes("e");
+		const movingPiece = game.get(move.from);
+		const movingValue = PIECE_VALUES[movingPiece.type] || 0;
+		const opponent = game.turn() === "w" ? "b" : "w";
+		if (!isCapture) {
+			applyMove(move);
+			const isUnsafe = game.isAttacked(move.to, game.turn());
+			game.undo();
+			if (isUnsafe) {
+				moveValue-=movingValue;
+				continue;
+			} else if (game.isAttacked(move.from, opponent)) {
+					moveValue+=movingValue;
+			}
+			const distance = distanceToCenter(move);
 
-        if (isCapture) {
+			if (distance < lowestDistance && movingPiece?.type !== "k") {
+			  lowestDistance = distance;
+			  lowestDistanceMove = move;
+			  lowestDistanceValue = moveValue;
+			  }
+			}
+        else {
           const capturedPiece = game.get(move.to);
-          const movingPiece = game.get(move.from);
 
           if (capturedPiece && movingPiece) {
             const capturedValue = PIECE_VALUES[capturedPiece.type] || 0;
-            const movingValue = PIECE_VALUES[movingPiece.type] || 0;
 
             applyMove(move);
             const isDefended = game.isAttacked(move.to, game.turn());
@@ -226,75 +273,112 @@
             if (isDefended && movingValue > capturedValue) {
               continue;
             }
-
-            moveValue += capturedValue - movingValue;
+			if (isDefended) {
+				const tradeValue = capturedValue - movingValue;
+				moveValue += tradeValue;
+				if (tradeValue >= 6 || tradeValue <= -3) {
+					continue;
+				}
+			}
+			else {
+				moveValue += capturedValue;
+				if (capturedValue >= 5) { 
+					continue;
+				}
+			}
           }
         }
+		const isPromotion = move && move.flags.includes('p')
+		if (isPromotion) {
+			moveValue+=9
+		}
+		else if (movingPiece.type == "p" && (move.from.endsWith('2') || move.from.endsWith('7'))) {
+			moveValue+=0.2;
+		}
+		const currentMoveCount = game.moves({ verbose: true })	
+		  .filter(m => m.from === move.from).length;
+		applyMove(move);
+		game._turn="b"
+		const allLegalMoves = game.moves({ verbose: true });
+		const isPawn = movingPiece.type == "p"
+		const moveCount = (allLegalMoves.filter(
+		  m => m.from === move.to
+		).length) - ((currentMoveCount * !isPawn) + ((currentMoveCount / 4) * isPawn));
+		game._turn="w"
+		game.undo();
 
-        const distance = distanceToCenter(move);
-        const movingPiece = game.get(move.from);
-
-        if (distance < lowestDistance && movingPiece?.type !== "r") {
-          lowestDistance = distance;
-          lowestDistanceMove = move;
-          lowestDistanceValue = moveValue;
-        }
+		moveValue += moveCount / movingValue;
 
         if (moveValue > bestValue) {
           bestValue = moveValue;
           bestMove = move;
         }
+		console.log({
+		  move: move.from + move.to,
+		  isPawn,
+		  moveValue
+		});
       }
-
+	  console.log("=".repeat(20))
+	  console.log(Date.now() - stamp)
+	  console.log("=".repeat(20))
       if (lowestDistanceMove &&
-          lowestDistanceValue + 0.1 > bestValue) {
+          lowestDistanceValue + 0 > bestValue) {
         bestMove = lowestDistanceMove;
       }
 
       if (bestMove) return bestMove;
-
       return legalMoves[Math.floor(Math.random() * legalMoves.length)];
     }
 
-    function renderBoard() {
-      boardElement.innerHTML = "";
 
-      for (let rank = 8; rank >= 1; rank--) {
-        for (let file = 0; file < 8; file++) {
-          const square = String.fromCharCode(97 + file) + rank;
-          const piece = game.get(square);
-          const button = document.createElement("button");
+	function renderBoard() {
+	  boardElement.innerHTML = "";
 
-          button.type = "button";
-          button.className =
-            "square " + ((rank + file) % 2 === 0 ? "light" : "dark");
-          button.setAttribute("aria-label", square);
+	  for (let rank = 8; rank >= 1; rank--) {
+		for (let file = 0; file < 8; file++) {
+		  const square = String.fromCharCode(97 + file) + rank;
+		  const piece = game.get(square);
+		  const button = document.createElement("button");
 
-          if (square === selectedSquare) {
-            button.classList.add("selected");
-          }
+		  button.type = "button";
+		  button.className =
+			"square " + ((rank + file) % 2 === 0 ? "light" : "dark");
+		  button.setAttribute("aria-label", square);
 
-          if (legalTargets.some(move => move.to === square)) {
-            button.classList.add("legal");
+		  if (square === selectedSquare) {
+			button.classList.add("selected");
+		  }
 
-            if (piece) button.classList.add("capture");
-          }
+		  if (legalTargets.some(move => move.to === square)) {
+			button.classList.add("legal");
+			if (piece) button.classList.add("capture");
+		  }
 
-          if (piece) {
-            const span = document.createElement("span");
-            span.className =
-              "piece " + (piece.color === "w" ? "white-piece" : "black-piece");
-            span.textContent = PIECES[piece.color][piece.type];
-            button.appendChild(span);
-          }
+		  if (piece) {
+			const img = document.createElement("img");
+			img.className = "piece-image";
+			img.src = pieceImageUrl(piece.color, piece.type);
+			img.alt =
+			  `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
+			img.draggable = false;
 
-          button.addEventListener("click", () => onSquareClick(square));
-          boardElement.appendChild(button);
-        }
-      }
+			img.onerror = () => {
+			  console.error("Could not load chess piece:", img.src);
+			  img.alt = "Image unavailable";
+			};
 
-      resignButton.disabled = gameOver;
-    }
+			button.appendChild(img);
+		  }
+
+		  button.addEventListener("click", () => onSquareClick(square));
+		  boardElement.appendChild(button);
+		}
+	  }
+
+	  resignButton.disabled = gameOver;
+	}
+
 
     function onSquareClick(square) {
       if (gameOver || thinking || game.turn() !== "w") return;
@@ -318,10 +402,16 @@
           selectedSquare = null;
           legalTargets = [];
 
-          if (moveResult) {
-            renderBoard();
+		if (moveResult) {
+		  playSound(
+			moveResult.captured || moveResult.flags.includes("e")
+			  ? "capture"
+			  : "move"
+		  );
 
-            if (checkGameOver()) return;
+		  renderBoard();
+
+		  if (checkGameOver()) return;
 
             thinking = true;
             renderBoard();
@@ -333,9 +423,14 @@
 
 				const response = botMove();
 
-				if (response) {
-				  applyMove(response);
-				}
+		if (response) {
+		  const isCapture =
+			response.flags.includes("c") ||
+			response.flags.includes("e");
+
+		  applyMove(response);
+		  playSound(isCapture ? "capture" : "move");
+		}
 
 			// Always release the board after Snappy's turn.
 			selectedSquare = null;
@@ -375,6 +470,7 @@
       if (!game.isGameOver()) return false;
 
       gameOver = true;
+	  playSound("gameover");
       thinking = false;
       selectedSquare = null;
       legalTargets = [];
@@ -393,7 +489,7 @@
       } else {
         alert("Game over!");
       }
-
+	  copyPGNButton.hidden = false;
       return true;
     }
 
@@ -415,6 +511,31 @@
           return;
         }
       }
+	
+	copyPGNButton.addEventListener("click", async () => {
+	  const pgn = game.pgn();
+	  try {
+		await navigator.clipboard.writeText(pgn);
+		alert("PGN copied to clipboard!");
+	  } catch (error) {
+		// Fallback for browsers where Clipboard API is unavailable.
+		const textarea = document.createElement("textarea");
+		textarea.value = pgn;
+		textarea.style.position = "fixed";const opponent = game.turn() === "w" ? "b" : "w";
+		textarea.style.opacity = "0";
+		document.body.appendChild(textarea);
+		textarea.select();
+
+		const copied = document.execCommand("copy");
+		textarea.remove();
+
+		if (copied) {
+		  alert("PGN copied to clipboard!");
+		} else {
+		  alert("Unable to copy PGN. Please copy it manually:\n\n" + pgn);
+		}
+	  }
+	});
 
       game.reset();
       selectedSquare = null;
